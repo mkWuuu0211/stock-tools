@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+*.egg-info/
+.installed.cfg
+*.egg
+pytest.cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-*
+
+# Data
+data/
+*.parquet
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment
+.env
+.env.*
+*.env
+.DS_Store
+
+# Jupyter
+*.ipynb_checkpoints/
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# Logs
+*.log
+logs/
