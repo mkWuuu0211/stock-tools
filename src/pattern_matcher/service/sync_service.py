@@ -26,18 +26,87 @@ class SyncService:
         """同步所有股票日线数据"""
         return self.sync_freq('D', skip_existing=skip_existing)
 
+    def resample_all_from_daily(
+        self,
+        freq: str,
+        progress_callback=None,
+    ) -> tuple:
+        """从已有的日线数据批量合成其他长周期数据
+
+        这比从网络下载快 100x+！
+
+        Args:
+            freq: 目标周期 W/M/Q/Y
+            progress_callback: 进度回调
+
+        Returns:
+            (成功数, 失败数)
+        """
+        # 获取所有已有日线数据的股票
+        daily_stocks = self.data_manager.get_all_local_stocks('D')
+
+        if not daily_stocks:
+            logger.warning("No daily data found, cannot resample")
+            return 0, 0
+
+        total = len(daily_stocks)
+        logger.info(f"Resampling {freq} from daily data for {total} stocks")
+
+        success = 0
+        failed = 0
+
+        for ts_code in daily_stocks:
+            # 读取日线
+            df_daily = self.data_manager.get_bars(ts_code, 'D')
+            if df_daily is None or df_daily.empty:
+                failed += 1
+                if progress_callback:
+                    progress_callback(success + failed, total, success, failed)
+                continue
+
+            # 合成目标周期
+            resampled_df = self.data_manager.resample_bars(df_daily, freq)
+            if resampled_df is None or resampled_df.empty:
+                failed += 1
+            else:
+                # 保存到磁盘
+                saved = self.data_manager.parquet_store.save(resampled_df, ts_code, freq)
+                if saved:
+                    # 更新同步状态
+                    start_date = str(resampled_df['trade_date'].iloc[0])
+                    end_date = str(resampled_df['trade_date'].iloc[-1])
+                    self.data_manager.sqlite_store.update_sync_status(
+                        ts_code, freq, start_date, end_date, len(resampled_df)
+                    )
+                    success += 1
+                else:
+                    failed += 1
+
+            # 进度回调
+            if progress_callback:
+                progress_callback(success + failed, total, success, failed)
+
+        logger.info(f"Resample completed: {success} success, {failed} failed")
+        return success, failed
+
     def sync_freq(
         self,
         freq: str,
         skip_existing: bool = True,
         limit: int = None,
+        progress_callback=None,
+        stale_days: int = 3,  # 超过N天没更新的数据才重新同步
     ) -> tuple:
         """同步指定周期的所有股票数据
 
+        对于长周期(W/M/Q/Y)，直接从日线数据批量合成，比网络下载快100x+
+
         Args:
             freq: 时间周期
-            skip_existing: 是否跳过已同步的
+            skip_existing: 是否跳过近期已同步的（检查数据新鲜度）
             limit: 限制同步数量，用于测试
+            progress_callback: 进度回调函数，参数为 (current, total, success, failed)
+            stale_days: 数据超过N天没更新视为过期，需要重新同步
 
         Returns:
             (成功数, 失败数)
@@ -46,14 +115,51 @@ class SyncService:
             logger.error(f"Unsupported frequency: {freq}")
             return 0, 0
 
+        # ========== 长周期：直接从日线合成，跳过网络下载 ==========
+        RESAMPLEABLE_FREQS = {'W', 'M', 'Q', 'Y'}
+        if freq in RESAMPLEABLE_FREQS:
+            logger.info(f"Resampling {freq} from daily data (faster!)")
+
+            # 检查是否有日线数据
+            daily_stocks = self.data_manager.get_all_local_stocks('D')
+            if not daily_stocks:
+                logger.warning(f"No daily data found! Cannot resample {freq}. Please sync D first.")
+                raise RuntimeError("⚠️ 没有找到日线数据！长周期K线依赖日线数据，请先同步日线。")
+
+            return self.resample_all_from_daily(freq, progress_callback)
+
         # 获取股票列表
         stock_df = self.data_manager.get_stock_list()
         ts_codes = stock_df['ts_code'].tolist()
 
         if skip_existing:
-            # 获取已经同步的状态
-            existing = self.data_manager.get_all_local_stocks(freq)
-            ts_codes = [t for t in ts_codes if t not in existing]
+            # ========== 修复：检查数据新鲜度，不是简单跳过 ==========
+            # 获取已同步股票的最新日期
+            from datetime import datetime, timedelta
+
+            # 计算过期阈值日期
+            today = datetime.now()
+            stale_threshold = (today - timedelta(days=stale_days)).strftime('%Y%m%d')
+
+            # 获取所有已同步股票的状态
+            status_map = self.data_manager.get_sync_status_for_all(freq)
+
+            # 只保留：没同步过或数据已过期的股票
+            need_sync = []
+            for ts_code in ts_codes:
+                status = status_map.get(ts_code)
+                if status is None:
+                    # 没同步过
+                    need_sync.append(ts_code)
+                else:
+                    # 已同步，检查数据是否过期
+                    end_date = status.get('end_date', '')
+                    if not end_date or end_date < stale_threshold:
+                        need_sync.append(ts_code)
+                    # else: 数据是新的，跳过
+
+            ts_codes = need_sync
+            logger.info(f"Found {len(ts_codes)} stocks need sync (checked freshness check passed)")
 
         if limit is not None and limit > 0:
             ts_codes = ts_codes[:limit]
@@ -71,6 +177,11 @@ class SyncService:
         # 记录同步开始
         log_id = self.data_manager.sqlite_store.log_sync_start(freq, total)
 
+        # 立即初始化进度（循环开始前就创建running状态记录）
+        self.data_manager.sqlite_store.update_sync_progress(
+            freq, 0, total, 0, 0, 'running'
+        )
+
         try:
             for ts_code in tqdm(ts_codes, desc=f"Syncing {freq}"):
                 ok, count = self.data_manager.download_and_save(ts_code, freq)
@@ -79,6 +190,15 @@ class SyncService:
                 else:
                     failed += 1
 
+                # 更新持久化进度
+                self.data_manager.sqlite_store.update_sync_progress(
+                    freq, success + failed, total, success, failed, 'running'
+                )
+
+                # 进度回调
+                if progress_callback is not None:
+                    progress_callback(success + failed, total, success, failed)
+
                 if (success + failed) % 50 == 0:
                     logger.info(f"Sync progress: {success + failed}/{total}, success={success}")
 
@@ -86,6 +206,7 @@ class SyncService:
             self.data_manager.sqlite_store.log_sync_end(
                 log_id, success, failed, 'completed'
             )
+            self.data_manager.sqlite_store.finish_sync_progress(freq, success, failed)
             logger.info(f"Sync completed for {freq}: success={success}, failed={failed}")
 
         except Exception as e:

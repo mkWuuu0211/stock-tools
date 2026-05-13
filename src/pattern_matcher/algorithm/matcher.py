@@ -198,27 +198,19 @@ class PatternMatcher:
         if use_multiprocessing and len(first_stage) > 10:
             # 多进程并行计算
             with Pool(self.n_processes) as pool:
-                tasks = [(target_series, cs) for _, cs, _ in first_stage]
-                ts_codes = [tsc for tsc, _, _ in first_stage]
+                tasks = [
+                    (target_series, series, ts_code, self.weight_pearson,
+                     self.weight_dtw, self.weight_feature, True)
+                    for ts_code, series, _ in first_stage
+                ]
 
                 if verbose:
                     tasks_iter = tqdm(tasks, desc="Stage 2-3: DTW+Feature matching")
                 else:
                     tasks_iter = tasks
 
-                scores = []
-                for i, score in enumerate(pool.starmap(self._compute_final_score, tasks_iter)):
-                    scores.append(score)
-
-                for (ts_code, series, _), score in zip(first_stage, scores):
-                    best_score, best_start = self.match_segment(
-                        target_series, series, sliding=True
-                    )
-                    results.append({
-                        'ts_code': ts_code,
-                        'score': best_score,
-                        'start_idx': best_start,
-                    })
+                for result in pool.starmap(_match_segment_worker, tasks_iter):
+                    results.append(result)
 
         else:
             # 单进程计算
@@ -228,14 +220,12 @@ class PatternMatcher:
                 iterator = first_stage
 
             for ts_code, series, _ in iterator:
-                best_score, best_start = self.match_segment(
-                    target_series, series, sliding=True
+                result = _match_segment_worker(
+                    target_series, series, ts_code,
+                    self.weight_pearson, self.weight_dtw,
+                    self.weight_feature, sliding=True
                 )
-                results.append({
-                    'ts_code': ts_code,
-                    'score': best_score,
-                    'start_idx': best_start,
-                })
+                results.append(result)
 
         # 按得分排序
         results.sort(key=lambda x: x['score'], reverse=True)
@@ -249,9 +239,56 @@ class PatternMatcher:
         return results
 
 
-def match_single_candidate(args):
-    """多进程辅助函数"""
-    target, candidate = args
-    matcher = PatternMatcher()
-    score = matcher._compute_final_score(target, candidate)
-    return score
+def _match_segment_worker(
+    target_series: np.ndarray,
+    candidate_series: np.ndarray,
+    ts_code: str,
+    weight_pearson: float,
+    weight_dtw: float,
+    weight_feature: float,
+    sliding: bool = True,
+) -> Dict:
+    """多进程Worker函数 - 在候选序列上匹配目标片段
+
+    模块级函数，避免实例方法pickle问题
+    """
+    from .similarity import pearson_similarity, dtw_similarity
+    from .features import extract_feature_vector, feature_cosine_similarity
+
+    target_len = len(target_series)
+    candidate_len = len(candidate_series)
+
+    if candidate_len < target_len:
+        return {'ts_code': ts_code, 'score': 0.0, 'start_idx': None}
+
+    def _compute_score(target: np.ndarray, candidate: np.ndarray) -> float:
+        min_len = min(len(target), len(candidate))
+        target_cut = target[:min_len]
+        candidate_cut = candidate[:min_len]
+
+        p_sim = pearson_similarity(target_cut, candidate_cut)
+        d_sim = dtw_similarity(target, candidate)
+
+        target_feat = extract_feature_vector(target)
+        candidate_feat = extract_feature_vector(candidate)
+        f_sim = feature_cosine_similarity(target_feat, candidate_feat)
+
+        return weight_pearson * p_sim + weight_dtw * d_sim + weight_feature * f_sim
+
+    if not sliding or candidate_len == target_len:
+        score = _compute_score(target_series, candidate_series)
+        return {'ts_code': ts_code, 'score': score, 'start_idx': 0}
+
+    # 滑动窗口寻找最佳匹配
+    n_windows = candidate_len - target_len + 1
+    best_score = -1.0
+    best_start = 0
+
+    for start in range(n_windows):
+        window = candidate_series[start:start + target_len]
+        score = _compute_score(target_series, window)
+        if score > best_score:
+            best_score = score
+            best_start = start
+
+    return {'ts_code': ts_code, 'score': best_score, 'start_idx': best_start}
