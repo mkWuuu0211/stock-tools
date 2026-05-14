@@ -40,9 +40,9 @@ ENV/
 *.sublime-*
 
 # Data
-data/
+data/*
+!data/stock_metadata.db
 *.parquet
-*.db
 *.sqlite
 *.sqlite3
 
