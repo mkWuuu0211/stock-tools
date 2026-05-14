@@ -60,3 +60,8 @@ data/
 # Logs
 *.log
 logs/
+
+# Test outputs
+test_outputs/
+*.png
+*.jpg

@@ -32,7 +32,22 @@ def init_services():
 dm, pattern_service = init_services()
 
 # 标题
-st.header("🔍 形态相似性选股")
+st.title("🔍 形态相似性选股")
+st.markdown("---")
+
+# 快捷跳转栏
+st.subheader("⚡ 快捷跳转")
+col1, col2, col3 = st.columns(3)
+with col1:
+    if st.button("📥 数据管理", use_container_width=True):
+        st.switch_page("pages/1_📥_数据管理.py")
+with col2:
+    if st.button("📈 查看K线图", use_container_width=True):
+        st.switch_page("pages/3_📈_K线图展示.py")
+with col3:
+    if st.button("⚙️ 系统配置", use_container_width=True):
+        st.switch_page("pages/4_⚙️_系统配置.py")
+
 st.markdown("---")
 
 # 获取股票列表

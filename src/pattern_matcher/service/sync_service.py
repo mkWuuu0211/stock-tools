@@ -89,6 +89,75 @@ class SyncService:
         logger.info(f"Resample completed: {success} success, {failed} failed")
         return success, failed
 
+    def sync_specific_stocks(self, freq: str, ts_codes: List[str]) -> tuple:
+        """同步指定的股票列表（用于重试失败的股票）
+
+        Args:
+            freq: 时间周期
+            ts_codes: 股票代码列表
+
+        Returns:
+            (成功数, 失败数)
+        """
+        total = len(ts_codes)
+        if total == 0:
+            return 0, 0
+
+        logger.info(f"Retrying sync for {freq}, {total} specific stocks")
+
+        success = 0
+        failed = 0
+        failed_stocks = []
+
+        # 记录同步开始
+        log_id = self.data_manager.sqlite_store.log_sync_start(freq, total)
+
+        # 立即初始化进度
+        self.data_manager.sqlite_store.update_sync_progress(
+            freq, 0, total, 0, 0, 'running'
+        )
+
+        try:
+            for ts_code in tqdm(ts_codes, desc=f"Retrying {freq}"):
+                try:
+                    ok, count = self.data_manager.download_and_save(ts_code, freq)
+                    if ok:
+                        success += 1
+                    else:
+                        failed += 1
+                        failed_stocks.append(ts_code)
+                except Exception as e:
+                    logger.warning(f"Failed to download {ts_code}: {e}")
+                    failed += 1
+                    failed_stocks.append(ts_code)
+
+                # 更新持久化进度
+                try:
+                    self.data_manager.sqlite_store.update_sync_progress(
+                        freq, success + failed, total, success, failed, 'running'
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update progress: {e}")
+
+            # 记录同步完成
+            self.data_manager.sqlite_store.log_sync_end(
+                log_id, success, failed, 'completed'
+            )
+            self.data_manager.sqlite_store.finish_sync_progress(freq, success, failed, failed_stocks)
+            logger.info(f"Retry sync completed for {freq}: success={success}, failed={failed}")
+
+        except Exception as e:
+            try:
+                self.data_manager.sqlite_store.log_sync_end(
+                    log_id, success, failed, 'failed', str(e)
+                )
+                self.data_manager.sqlite_store.finish_sync_progress(freq, success, failed, failed_stocks)
+            except:
+                pass
+            logger.error(f"Retry sync interrupted: {e}")
+
+        return success, failed
+
     def sync_freq(
         self,
         freq: str,
@@ -173,6 +242,7 @@ class SyncService:
 
         success = 0
         failed = 0
+        failed_stocks = []  # 记录失败的股票代码
 
         # 记录同步开始
         log_id = self.data_manager.sqlite_store.log_sync_start(freq, total)
@@ -184,16 +254,25 @@ class SyncService:
 
         try:
             for ts_code in tqdm(ts_codes, desc=f"Syncing {freq}"):
-                ok, count = self.data_manager.download_and_save(ts_code, freq)
-                if ok:
-                    success += 1
-                else:
+                try:
+                    ok, count = self.data_manager.download_and_save(ts_code, freq)
+                    if ok:
+                        success += 1
+                    else:
+                        failed += 1
+                        failed_stocks.append(ts_code)
+                except Exception as e:
+                    logger.warning(f"Failed to download {ts_code}: {e}")
                     failed += 1
+                    failed_stocks.append(ts_code)
 
                 # 更新持久化进度
-                self.data_manager.sqlite_store.update_sync_progress(
-                    freq, success + failed, total, success, failed, 'running'
-                )
+                try:
+                    self.data_manager.sqlite_store.update_sync_progress(
+                        freq, success + failed, total, success, failed, 'running'
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update progress: {e}")
 
                 # 进度回调
                 if progress_callback is not None:
@@ -206,16 +285,19 @@ class SyncService:
             self.data_manager.sqlite_store.log_sync_end(
                 log_id, success, failed, 'completed'
             )
-            self.data_manager.sqlite_store.finish_sync_progress(freq, success, failed)
+            self.data_manager.sqlite_store.finish_sync_progress(freq, success, failed, failed_stocks)
             logger.info(f"Sync completed for {freq}: success={success}, failed={failed}")
 
         except Exception as e:
             # 记录错误
-            self.data_manager.sqlite_store.log_sync_end(
-                log_id, success, failed, 'failed', str(e)
-            )
+            try:
+                self.data_manager.sqlite_store.log_sync_end(
+                    log_id, success, failed, 'failed', str(e)
+                )
+                self.data_manager.sqlite_store.finish_sync_progress(freq, success, failed, failed_stocks)
+            except:
+                pass
             logger.error(f"Sync interrupted: {e}")
-            raise
 
         return success, failed
 

@@ -22,6 +22,21 @@ st.set_page_config(
 st.title("📈 K线图查看")
 st.markdown("---")
 
+# 快捷跳转栏
+st.subheader("⚡ 快捷跳转")
+col1, col2, col3 = st.columns(3)
+with col1:
+    if st.button("📥 数据管理", use_container_width=True):
+        st.switch_page("pages/1_📥_数据管理.py")
+with col2:
+    if st.button("🔍 形态选股", use_container_width=True):
+        st.switch_page("pages/2_🔍_形态相似性选股.py")
+with col3:
+    if st.button("⚙️ 系统配置", use_container_width=True):
+        st.switch_page("pages/4_⚙️_系统配置.py")
+
+st.markdown("---")
+
 # 初始化数据管理器
 @st.cache_resource
 def init_data_manager():
@@ -112,7 +127,7 @@ if selected_stock_label:
                 with col_d:
                     st.metric("🔻 最低", f"{latest['low']:.2f}")
                 with col_e:
-                    st.metric("📊 成交量", f"{latest['vol']:,.0f}")
+                    st.metric("📊 成交量", f"{latest['volume']:,.0f}")
 
             st.markdown("---")
 
@@ -183,7 +198,7 @@ if selected_stock_label:
                     f"最低: {l:.2f}<br>"
                     f"收盘: {c:.2f}<br>"
                     f"成交量: {v:,.0f}"
-                    for d, o, h, l, c, v in zip(x_data, df['open'], df['high'], df['low'], df['close'], df['vol'])
+                    for d, o, h, l, c, v in zip(x_data, df['open'], df['high'], df['low'], df['close'], df['volume'])
                 ],
                 hoverinfo="text",
             ), row=1, col=1)
@@ -212,7 +227,7 @@ if selected_stock_label:
             # 成交量柱状图
             fig.add_trace(go.Bar(
                 x=x_data,
-                y=df['vol'],
+                y=df['volume'],
                 marker_color=df['color'],
                 name='成交量',
                 opacity=0.7,
@@ -247,7 +262,7 @@ if selected_stock_label:
             # ========== 数据预览表格 ==========
             st.markdown("---")
             with st.expander("📋 查看原始数据"):
-                display_cols = ['trade_date', 'open', 'high', 'low', 'close', 'vol']
+                display_cols = ['trade_date', 'open', 'high', 'low', 'close', 'volume']
                 display_cols = [c for c in display_cols if c in df.columns]
                 display_df = df[display_cols].copy()
 
@@ -255,8 +270,8 @@ if selected_stock_label:
                 for col in ['open', 'high', 'low', 'close']:
                     if col in display_df.columns:
                         display_df[col] = display_df[col].round(2)
-                if 'vol' in display_df.columns:
-                    display_df['vol'] = display_df['vol'].astype(int)
+                if 'volume' in display_df.columns:
+                    display_df['volume'] = display_df['volume'].astype(int)
 
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
 
