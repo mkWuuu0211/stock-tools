@@ -60,11 +60,13 @@ with col1:
     )
 
 with col2:
-    freq_options = list(SUPPORTED_FREQS.items())
+    # 调整顺序：默认优先显示日线
+    freq_order = ['D', 'W', 'M', 'Q', 'Y', '1min', '5min', '15min', '30min', '60min']
+    freq_options = [(f, SUPPORTED_FREQS[f]) for f in freq_order if f in SUPPORTED_FREQS]
     selected_freq_label = st.selectbox(
         "📅 时间周期",
         options=[name for _, name in freq_options],
-        index=0,
+        index=0,  # 默认选日线
     )
     # 根据选择的名称反查code
     selected_freq = [k for k, v in freq_options if v == selected_freq_label][0]
@@ -134,22 +136,57 @@ if selected_stock_label:
             # 显示范围选择
             st.subheader("📊 选择显示区间")
 
-            range_mode = st.radio("范围选择方式", ["显示全部", "显示最近N根", "手动选择区间"], horizontal=True)
+            # 默认显示数量
+            DEFAULT_BARS = 120
+            view_size = st.slider("每次显示K线数量", min_value=20, max_value=min(250, total_len), value=min(DEFAULT_BARS, total_len))
 
-            if range_mode == "显示全部":
+            # 使用session_state保存当前位置
+            if 'view_position' not in st.session_state:
+                st.session_state.view_position = max(0, total_len - view_size)
+
+            # 翻页按钮
+            col1, col2, col3, col4 = st.columns([1, 1, 2, 1])
+            with col1:
+                if st.button("⏮️ 最开始", use_container_width=True):
+                    st.session_state.view_position = 0
+                    st.rerun()
+            with col2:
+                if st.button("◀️ 往前看", use_container_width=True):
+                    st.session_state.view_position = max(0, st.session_state.view_position - view_size // 2)
+                    st.rerun()
+            with col3:
+                current_pos = st.session_state.view_position
+                st.info(f"📈 第 {current_pos+1} - {min(current_pos+view_size, total_len)} 根 / 共 {total_len} 根")
+            with col4:
+                if st.button("▶️ 往后看", use_container_width=True):
+                    st.session_state.view_position = min(total_len - view_size, st.session_state.view_position + view_size // 2)
+                    st.rerun()
+
+            # 高级选项：跳转到指定位置或显示全部
+            with st.expander("⚙️ 更多选项"):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    if st.button("📅 显示最近", use_container_width=True):
+                        st.session_state.view_position = max(0, total_len - view_size)
+                        st.rerun()
+                with col_b:
+                    show_all = st.button("📊 显示全部", use_container_width=True)
+
+                # 精确跳转
+                jump_to = st.number_input("跳转到第N根K线", min_value=1, max_value=total_len, value=current_pos+1)
+                if st.button("跳转", use_container_width=True):
+                    st.session_state.view_position = max(0, min(total_len - view_size, jump_to - 1))
+                    st.rerun()
+
+            # 确定显示范围
+            if 'show_all' in locals() and show_all:
                 start_idx, end_idx = 0, total_len
-            elif range_mode == "显示最近N根":
-                n_bars = st.slider("显示最近N根K线", min_value=20, max_value=total_len, value=min(120, total_len))
-                start_idx, end_idx = max(0, total_len - n_bars), total_len
             else:
-                # 手动选择
-                start_idx = st.slider("起始位置", min_value=0, max_value=total_len-5, value=max(0, total_len-120))
-                end_idx = st.slider("结束位置", min_value=start_idx+3, max_value=total_len, value=total_len)
+                start_idx = st.session_state.view_position
+                end_idx = min(start_idx + view_size, total_len)
 
             df = df_full.iloc[start_idx:end_idx].copy()
             actual_len = len(df)
-
-            st.info(f"📈 正在显示 {actual_len} 根K线")
 
             # ========== 计算技术指标 ==========
             # MA均线

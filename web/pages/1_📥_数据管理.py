@@ -56,25 +56,39 @@ if valid_running_syncs:
 # ========== 📊 当前同步状态 ==========
 st.subheader("📊 当前同步状态")
 
+# 获取日线同步数量（用于计算可合成的长周期数量）
+daily_status = sync_service.get_sync_status('D')
+daily_count = daily_status['synced_count']
+
 status_cols = st.columns(len(SUPPORTED_FREQS))
 for idx, (freq, name) in enumerate(SUPPORTED_FREQS.items()):
     with status_cols[idx]:
         status = sync_service.get_sync_status(freq)
         progress = status['sync_percent']
+        synced = status['synced_count']
+        total = status['total_stocks']
 
-        # 根据进度显示颜色图标
-        if progress >= 100:
-            icon = "✅"
-        elif progress > 0:
-            icon = "🔄"
+        # 长周期（W/M/Q/Y）显示可合成状态
+        RESAMPLEABLE = {'W', 'M', 'Q', 'Y'}
+        if freq in RESAMPLEABLE and synced == 0 and daily_count > 0:
+            # 没有独立文件，但可以从日线合成
+            icon = "⚡"
+            label = f"{icon} {name} (自动合成)"
+            value = f"{min(daily_count, total)} 只可用"
+            delta = "从日线自动生成"
         else:
-            icon = "⭕"
+            # 根据进度显示颜色图标
+            if progress >= 100:
+                icon = "✅"
+            elif progress > 0:
+                icon = "🔄"
+            else:
+                icon = "⭕"
+            label = f"{icon} {name}"
+            value = f"{progress:.1f}%"
+            delta = f"{synced} / {total}"
 
-        st.metric(
-            label=f"{icon} {name}",
-            value=f"{progress:.1f}%",
-            delta=f"{status['synced_count']} / {status['total_stocks']}"
-        )
+        st.metric(label=label, value=value, delta=delta)
 
 st.markdown("---")
 
