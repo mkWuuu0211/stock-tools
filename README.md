@@ -47,6 +47,51 @@ stock-tools/
 └── tests/
 ```
 
+## 🚀 快速开始
+
+### 1. 首次运行初始化
+
+```bash
+# 克隆项目
+git clone https://github.com/mkWuuu0211/stock-tools.git
+cd stock-tools
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 初始化（创建目录 + 获取股票列表）
+python scripts/first_run.py
+```
+
+### 2. 启动Web界面
+
+```bash
+streamlit run web/app.py
+```
+
+浏览器自动打开：http://localhost:8501
+
+### 3. 同步数据
+
+进入「📥 数据管理」页面，点击「开始同步」获取日线数据。
+
+> 💡 **提示**：周/月/季/年线不需要单独同步，会自动从日线数据合成。
+
+---
+
+## ❓ 常见问题
+
+**Q: 股票下拉框是空的？**
+- 运行 `python scripts/first_run.py` 初始化股票列表
+
+**Q: 提示数据尚未同步？**
+- 进入「数据管理」页面，点击「开始同步」
+
+**Q: 切换到周线/月线没有数据？**
+- 只要日线已同步，长周期自动合成，稍等片刻即可
+
+---
+
 ## ✨ 功能特点
 
 ### 🔍 形态相似性选股
