@@ -175,23 +175,37 @@ class DataManager:
         return df[column].reset_index(drop=True)
 
     def download_and_save(self, ts_code: str, freq: str) -> Tuple[bool, int]:
-        """从网络下载并保存数据 - 支持增量更新"""
+        """从网络下载并保存数据 - 支持真正的增量更新"""
         symbol = ts_code.split('.')[0] if '.' in ts_code else ts_code
 
         if freq not in SUPPORTED_FREQS:
             logger.error(f"Unsupported frequency: {freq}")
             return False, 0
 
-        # 读取本地已有数据
+        # 读取本地已有数据，用于增量更新
         existing_df = self.get_bars(ts_code, freq)
         has_existing = existing_df is not None and not existing_df.empty
 
-        # 尝试Tushare
+        # ========== 增量更新：只下载本地最新日期之后的数据 ==========
+        start_date = None
+        if has_existing and 'trade_date' in existing_df.columns:
+            local_latest = str(existing_df['trade_date'].iloc[-1])
+            logger.debug(f"{ts_code} {freq} local latest: {local_latest}")
+            # 转换为YYYY-MM-DD格式给Baostock使用
+            if len(local_latest) == 8:  # YYYYMMDD -> YYYY-MM-DD
+                start_date = f"{local_latest[:4]}-{local_latest[4:6]}-{local_latest[6:8]}"
+            else:
+                start_date = local_latest
+
         df = None
+
+        # 尝试Tushare
         if self.tushare and self.tushare.token:
             try:
                 if freq in ['D', 'W', 'M']:
-                    df = self.tushare.get_daily_bars(ts_code)
+                    # Tushare接受YYYYMMDD格式
+                    tushare_start = start_date.replace('-', '') if start_date else None
+                    df = self.tushare.get_daily_bars(ts_code, start_date=tushare_start)
                 else:
                     df = self.tushare.get_minute_bars(ts_code, freq)
             except Exception as e:
@@ -211,7 +225,8 @@ class DataManager:
         # AkShare失败，尝试Baostock（仅支持长周期）
         if (df is None or df.empty) and freq in ['D', 'W', 'M', 'Q', 'Y']:
             try:
-                df = self.baostock.get_daily_bars(ts_code)
+                # Baostock接受YYYY-MM-DD格式的start_date
+                df = self.baostock.get_daily_bars(ts_code, start_date=start_date)
             except Exception as e:
                 logger.warning(f"Baostock download failed for {ts_code} {freq}: {e}")
 
