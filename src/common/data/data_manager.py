@@ -187,15 +187,19 @@ class DataManager:
         has_existing = existing_df is not None and not existing_df.empty
 
         # ========== 增量更新：只下载本地最新日期之后的数据 ==========
-        start_date = None
+        start_date_yyyymmdd = None  # Tushare/AkShare格式: 20260520
+        start_date_iso = None       # Baostock格式: 2026-05-20
+
         if has_existing and 'trade_date' in existing_df.columns:
             local_latest = str(existing_df['trade_date'].iloc[-1])
             logger.debug(f"{ts_code} {freq} local latest: {local_latest}")
-            # 转换为YYYY-MM-DD格式给Baostock使用
-            if len(local_latest) == 8:  # YYYYMMDD -> YYYY-MM-DD
-                start_date = f"{local_latest[:4]}-{local_latest[4:6]}-{local_latest[6:8]}"
+
+            if len(local_latest) == 8:  # YYYYMMDD
+                start_date_yyyymmdd = local_latest
+                start_date_iso = f"{local_latest[:4]}-{local_latest[4:6]}-{local_latest[6:8]}"
             else:
-                start_date = local_latest
+                start_date_iso = local_latest
+                start_date_yyyymmdd = local_latest.replace('-', '')
 
         df = None
 
@@ -204,8 +208,7 @@ class DataManager:
             try:
                 if freq in ['D', 'W', 'M']:
                     # Tushare接受YYYYMMDD格式
-                    tushare_start = start_date.replace('-', '') if start_date else None
-                    df = self.tushare.get_daily_bars(ts_code, start_date=tushare_start)
+                    df = self.tushare.get_daily_bars(ts_code, start_date=start_date_yyyymmdd)
                 else:
                     df = self.tushare.get_minute_bars(ts_code, freq)
             except Exception as e:
@@ -215,7 +218,8 @@ class DataManager:
         if df is None or df.empty:
             try:
                 if freq in ['D', 'W', 'M', 'Q', 'Y']:
-                    df = self.akshare.get_daily_bars(symbol)
+                    # AkShare接受YYYYMMDD格式
+                    df = self.akshare.get_daily_bars(symbol, start_date=start_date_yyyymmdd)
                 else:
                     # 分钟线也使用AkShare降级
                     df = self.akshare.get_minute_bars(symbol, freq)
@@ -225,8 +229,8 @@ class DataManager:
         # AkShare失败，尝试Baostock（仅支持长周期）
         if (df is None or df.empty) and freq in ['D', 'W', 'M', 'Q', 'Y']:
             try:
-                # Baostock接受YYYY-MM-DD格式的start_date
-                df = self.baostock.get_daily_bars(ts_code, start_date=start_date)
+                # Baostock接受YYYY-MM-DD格式
+                df = self.baostock.get_daily_bars(ts_code, start_date=start_date_iso)
             except Exception as e:
                 logger.warning(f"Baostock download failed for {ts_code} {freq}: {e}")
 
