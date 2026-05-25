@@ -63,3 +63,22 @@ DEFAULT_N_PROCESSES = max(1, os.cpu_count() - 1)
 
 # 缓存配置
 RESULTS_CACHE_TTL = 24 * 3600  # 24小时
+
+# ========== 连板梯队配置 ==========
+# 不同板块的涨跌停阈值（百分比）
+LIMIT_THRESHOLD = {
+    'main': 0.10,      # 主板：±10%
+    'chinext': 0.20,   # 创业板：±20%
+    'star': 0.20,      # 科创板：±20%
+    'bse': 0.30,       # 北交所：±30%
+    'st': 0.05,        # ST股票：±5%
+}
+
+# 涨跌停检测容差（允许实际涨幅略低于阈值）
+LIMIT_TOLERANCE = 0.02  # 2%容差
+
+# 连板统计时显示的前N天走势
+CONSECUTIVE_DAYS_TO_SHOW = 20
+
+# 涨停/跌停榜单中每档最多显示的股票数量
+MAX_STOCKS_PER_TIER = 12

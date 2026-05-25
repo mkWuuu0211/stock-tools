@@ -291,3 +291,177 @@ class DataManager:
     def get_sync_status_for_all(self, freq: str) -> dict:
         """获取指定周期所有股票的同步状态"""
         return self.sqlite_store.get_sync_status_map(freq)
+
+    def get_storage_stats(self) -> dict:
+        """获取存储统计信息
+
+        Returns:
+            字典结构：
+            {
+                'total_size_mb': float,
+                'total_file_count': int,
+                'by_freq': {
+                    'D': {'count': int, 'size_mb': float},
+                    'W': {'count': int, 'size_mb': float},
+                    ...
+                }
+            }
+        """
+        stats = {
+            'total_size_mb': 0,
+            'total_file_count': 0,
+            'by_freq': {}
+        }
+
+        for freq in SUPPORTED_FREQS:
+            freq_dir = self.parquet_store.base_dir / freq
+            if freq_dir.exists():
+                files = list(freq_dir.glob('*.parquet'))
+                total_size = sum(f.stat().st_size for f in files)
+                stats['by_freq'][freq] = {
+                    'count': len(files),
+                    'size_mb': total_size / 1024 / 1024
+                }
+                stats['total_size_mb'] += stats['by_freq'][freq]['size_mb']
+                stats['total_file_count'] += len(files)
+            else:
+                stats['by_freq'][freq] = {'count': 0, 'size_mb': 0}
+
+        return stats
+
+    def get_data_freshness_heatmap(self, days: int = 30, sample_size: int = 100) -> dict:
+        """获取数据新鲜度热力图数据
+
+        Args:
+            days: 最近多少天
+            sample_size: 抽样检查的股票数量
+
+        Returns:
+            {date_str: count} 字典，表示每个日期有多少股票有数据
+        """
+        from datetime import datetime, timedelta
+
+        heatmap = {}
+        today = datetime.now()
+
+        # 初始化最近N天的日期
+        for days_ago in range(days):
+            date = today - timedelta(days=days_ago)
+            date_str = date.strftime('%Y%m%d')
+            heatmap[date_str] = 0
+
+        # 抽样检查股票数据
+        all_stocks = self.get_all_local_stocks('D')
+        sample = all_stocks[:sample_size]
+
+        for ts_code in sample:
+            df = self.get_bars(ts_code, 'D')
+            if df is not None and not df.empty:
+                # 检查最近N天的数据
+                for date_str in heatmap.keys():
+                    if (df['trade_date'] == date_str).any():
+                        heatmap[date_str] += 1
+
+        return heatmap
+
+    def check_data_quality(self, freq: str = 'D', sample_size: int = 500) -> dict:
+        """检查数据质量
+
+        Args:
+            freq: 检查的周期
+            sample_size: 抽样检查的股票数量
+
+        Returns:
+            {
+                'missing_trading_days': [{'ts_code': str, 'missing_count': int}, ...],
+                'empty_files': [str, ...],
+                'price_anomalies': [{'ts_code': str, 'anomaly_count': int}, ...],
+                'stale_data': [{'ts_code': str, 'days_old': int}, ...],
+                'summary': {
+                    'total_checked': int,
+                    'healthy': int,
+                    'issues': int
+                }
+            }
+        """
+        from datetime import datetime
+
+        issues = {
+            'missing_trading_days': [],
+            'empty_files': [],
+            'price_anomalies': [],
+            'stale_data': [],
+            'summary': {
+                'total_checked': 0,
+                'healthy': 0,
+                'issues': 0
+            }
+        }
+
+        all_stocks = self.get_all_local_stocks(freq)
+        sample = all_stocks[:sample_size]
+        issues['summary']['total_checked'] = len(sample)
+
+        for ts_code in sample:
+            df = self.get_bars(ts_code, freq)
+            has_issue = False
+
+            # 检查空文件
+            if df is None or df.empty:
+                issues['empty_files'].append(ts_code)
+                has_issue = True
+                continue
+
+            # 检查缺失交易日（仅对日线）
+            if freq == 'D' and 'trade_date' in df.columns:
+                try:
+                    dates = pd.to_datetime(df['trade_date'], format='%Y%m%d')
+                    date_range = pd.bdate_range(dates.min(), dates.max())
+                    missing = set(date_range) - set(dates)
+                    if len(missing) > 5:  # 超过5个工作日缺失
+                        issues['missing_trading_days'].append({
+                            'ts_code': ts_code,
+                            'missing_count': len(missing)
+                        })
+                        has_issue = True
+                except Exception:
+                    pass  # 日期格式问题，跳过
+
+            # 检查价格异常（单日涨跌超过30%）
+            if 'close' in df.columns:
+                try:
+                    pct_change = df['close'].pct_change().abs()
+                    anomalies = pct_change[pct_change > 0.3]
+                    if not anomalies.empty:
+                        issues['price_anomalies'].append({
+                            'ts_code': ts_code,
+                            'anomaly_count': len(anomalies)
+                        })
+                        has_issue = True
+                except Exception:
+                    pass
+
+            # 检查数据新鲜度
+            if 'trade_date' in df.columns and not df.empty:
+                try:
+                    last_date = str(df['trade_date'].iloc[-1])
+                    if len(last_date) == 8:  # YYYYMMDD
+                        days_old = (datetime.now() - datetime.strptime(last_date, '%Y%m%d')).days
+                    else:  # YYYY-MM-DD
+                        days_old = (datetime.now() - datetime.strptime(last_date, '%Y-%m-%d')).days
+
+                    if days_old > 7:
+                        issues['stale_data'].append({
+                            'ts_code': ts_code,
+                            'days_old': days_old
+                        })
+                        has_issue = True
+                except Exception:
+                    pass
+
+            if has_issue:
+                issues['summary']['issues'] += 1
+            else:
+                issues['summary']['healthy'] += 1
+
+        return issues
